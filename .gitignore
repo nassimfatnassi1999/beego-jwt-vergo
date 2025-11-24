@@ -1,0 +1,12 @@
+/.idea
+/swagger
+lastupdate.tmp
+
+# Binaire Windows (nom du projet mis à jour)
+beego_jwt_vergo.exe
+beego_jwt_vergo.exe~
+
+# Ne pas versionner les clés
+keys/private.txt
+keys/public.txt
+
