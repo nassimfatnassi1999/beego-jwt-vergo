@@ -1,39 +1,52 @@
 package main
 
 import (
-	"fmt"
+    "fmt"
+    "log"
 
-	"github.com/astaxie/beego"
-	"github.com/astaxie/beego/orm"
-	_ "github.com/go-sql-driver/mysql"
+    "github.com/astaxie/beego"
+    "github.com/astaxie/beego/orm"
+    _ "github.com/go-sql-driver/mysql"
 
-	_ "beego-jwt-vergo/models"  // IMPORT IMPORTANT POUR LES MODELS
-	_ "beego-jwt-vergo/routers" // IMPORT IMPORTANT POUR LES ROUTES
+    _ "beego-jwt-vergo/models"  // register models via init()
+    _ "beego-jwt-vergo/routers" // register routes via init()
 )
 
 func init() {
+    // Read DB configuration from app.conf
+    dbUser := beego.AppConfig.String("db_user")
+    dbPass := beego.AppConfig.String("db_pass")
+    dbHost := beego.AppConfig.String("db_host")
+    dbName := beego.AppConfig.String("db_name")
+    dbPort := beego.AppConfig.String("db_port")
 
-	// Lecture config depuis app.conf
-	host := beego.AppConfig.String("db_host")
-	user := beego.AppConfig.String("db_user")
-	pass := beego.AppConfig.String("db_pass")
-	name := beego.AppConfig.String("db_name")
-	port := beego.AppConfig.String("db_port")
+    if dbUser == "" || dbName == "" {
+        log.Fatal("database configuration is missing in conf/app.conf")
+    }
 
-	// DSN
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=Local",
-		user, pass, host, port, name)
+    if dbHost == "" {
+        dbHost = "localhost"
+    }
+    if dbPort == "" {
+        dbPort = "3306"
+    }
 
-	fmt.Println("DSN utilisé :", dsn)
+    dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=Local",
+        dbUser, dbPass, dbHost, dbPort, dbName)
 
-	// Driver & DB
-	orm.RegisterDriver("mysql", orm.DRMySQL)
-	orm.RegisterDataBase("default", "mysql", dsn)
+    fmt.Println("Using DSN:", dsn)
 
-	// Sync DB – crée automatiquement la table users
-	orm.RunSyncdb("default", false, true)
+    orm.RegisterDriver("mysql", orm.DRMySQL)
+    if err := orm.RegisterDataBase("default", "mysql", dsn); err != nil {
+        log.Fatalf("failed to register database: %v", err)
+    }
+
+    // Synchronise the schema (only in dev)
+    if err := orm.RunSyncdb("default", false, true); err != nil {
+        log.Fatalf("failed to sync database schema: %v", err)
+    }
 }
 
 func main() {
-	beego.Run()
+    beego.Run()
 }

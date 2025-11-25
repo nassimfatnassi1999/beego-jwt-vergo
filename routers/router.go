@@ -8,30 +8,35 @@ import (
 )
 
 func init() {
-
-	// Root for testing
+	// Root route for simple health-check
 	beego.Get("/", func(ctx *context.Context) {
 		_ = ctx.Output.Body([]byte("Beego JWT API is running"))
 	})
 
-	// Routes sans namespace
+	// Non-versioned routes
 	beego.Router("/register", &controllers.UserController{}, "post:RegisterUser")
 	beego.Router("/login", &controllers.UserController{}, "post:LoginUser")
 	beego.Router("/users", &controllers.UserController{}, "get:IndexAll")
 
-	// Version API v1 (cleaner)
+	// Versioned API v1
 	apiV1 := beego.NewNamespace("/v1",
-
-		// /v1/register
 		beego.NSRouter("/register", &controllers.UserController{}, "post:RegisterUser"),
-
-		// /v1/login
 		beego.NSRouter("/login", &controllers.UserController{}, "post:LoginUser"),
-
-		// /v1/users
 		beego.NSRouter("/users", &controllers.UserController{}, "get:IndexAll"),
 	)
 
-	// enable namespace
+	//produit
+	beego.Router("/products", &controllers.ProductController{}, "post:CreateProduct")
+	beego.Router("/products", &controllers.ProductController{}, "get:GetAllProducts")
+	beego.Router("/products/:id", &controllers.ProductController{}, "get:GetProduct")
+	beego.Router("/products/:id", &controllers.ProductController{}, "put:UpdateProduct")
+	beego.Router("/products/:id", &controllers.ProductController{}, "delete:DeleteProduct")
+
+	// ORDERS
+	beego.Router("/orders", &controllers.OrderController{}, "post:CreateOrder")
+	beego.Router("/orders", &controllers.OrderController{}, "get:GetAllOrders")
+	beego.Router("/orders/:id", &controllers.OrderController{}, "get:GetOrder")
+	beego.Router("/orders/:id", &controllers.OrderController{}, "delete:DeleteOrder")
+
 	beego.AddNamespace(apiV1)
 }

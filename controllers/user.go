@@ -1,186 +1,168 @@
 package controllers
 
 import (
-	"beego-jwt-vergo/models"
-	"beego-jwt-vergo/services"
-	"encoding/json"
-	"fmt"
-	"strings"
+    "beego-jwt-vergo/models"
+    "beego-jwt-vergo/services"
+    "encoding/json"
+    "fmt"
+    "net/http"
+    "strings"
 
-	"github.com/astaxie/beego"
+    "github.com/astaxie/beego"
 )
 
 type UserController struct {
-	beego.Controller
-}
-
-type AuthorizedResponse struct {
-	Message string       `json:"message"`
-	User    *models.User `json:"user"`
-	Token   string       `json:"token"`
+    beego.Controller
 }
 
 type ErrorResponse struct {
-	Message string `json:"message"`
+    Error string `json:"error"`
 }
 
-// ============================================================================
-// REGISTER
-// ============================================================================
-
-// @router /register [post]
-func (cont *UserController) RegisterUser() {
-
-	fmt.Println("===== DEBUG REGISTER =====")
-
-	// Lire le body correctement
-	body := cont.Ctx.Input.CopyBody(1 << 20)
-
-	fmt.Println("RAW BODY:", string(body))
-	fmt.Println("Headers:", cont.Ctx.Request.Header)
-
-	var iu models.InputUser
-	if err := json.Unmarshal(body, &iu); err != nil {
-		fmt.Println("JSON ERROR:", err)
-		cont.Data["json"] = ErrorResponse{Message: "Invalid JSON format"}
-		cont.ServeJSON()
-		return
-	}
-
-	fmt.Println("PARSED USER:", iu)
-
-	if iu.Email == "" || iu.Password == "" || iu.Name == "" {
-		cont.Data["json"] = ErrorResponse{
-			Message: "Missing fields: email, password, name",
-		}
-		cont.ServeJSON()
-		return
-	}
-
-	id, err := models.CreateNew(iu.Email, iu.Password, iu.Name)
-	if err != nil {
-		cont.Data["json"] = ErrorResponse{Message: err.Error()}
-		cont.ServeJSON()
-		return
-	}
-
-	user, err := models.FindById(id)
-	if err != nil {
-		cont.Data["json"] = ErrorResponse{Message: err.Error()}
-		cont.ServeJSON()
-		return
-	}
-
-	token, err := services.MakeToken(id)
-	if err != nil {
-		cont.Data["json"] = ErrorResponse{Message: err.Error()}
-		cont.ServeJSON()
-		return
-	}
-
-	cont.Data["json"] = AuthorizedResponse{
-		Message: "User created successfully",
-		User:    user,
-		Token:   token,
-	}
-	cont.ServeJSON()
+type AuthorizedResponse struct {
+    Message string       `json:"message"`
+    User    *models.User `json:"user"`
+    Token   string       `json:"token"`
 }
 
-// ============================================================================
-// LOGIN
-// ============================================================================
+// RegisterUser handles POST /register
+func (c *UserController) RegisterUser() {
+    body := c.Ctx.Input.CopyBody(1 << 20)
 
-// @router /login [post]
-func (cont *UserController) LoginUser() {
+    var input models.InputUser
+    if err := json.Unmarshal(body, &input); err != nil {
+        c.CustomAbort(http.StatusBadRequest, "invalid JSON payload")
+        return
+    }
 
-	body := cont.Ctx.Input.CopyBody(1 << 20)
+    if strings.TrimSpace(input.Email) == "" ||
+        strings.TrimSpace(input.Password) == "" ||
+        strings.TrimSpace(input.Name) == "" {
+        c.Ctx.Output.SetStatus(http.StatusBadRequest)
+        _ = c.Ctx.Output.JSON(ErrorResponse{"email, password and name are required"}, false, false)
+        return
+    }
 
-	fmt.Println("===== DEBUG LOGIN =====")
-	fmt.Println("RAW BODY:", string(body))
+    // Default role = user
+    role := input.Role
+    if role == "" {
+        role = "user"
+    }
 
-	var credentials models.BasicCredentials
-	if err := json.Unmarshal(body, &credentials); err != nil {
-		cont.Data["json"] = ErrorResponse{Message: "Invalid JSON format"}
-		cont.ServeJSON()
-		return
-	}
+    id, err := models.CreateNew(input.Email, input.Password, input.Name, role)
+    if err != nil {
+        c.Ctx.Output.SetStatus(http.StatusBadRequest)
+        _ = c.Ctx.Output.JSON(ErrorResponse{err.Error()}, false, false)
+        return
+    }
 
-	if credentials.Email == "" || credentials.Password == "" {
-		cont.Data["json"] = ErrorResponse{Message: "Missing email or password"}
-		cont.ServeJSON()
-		return
-	}
+    user, err := models.FindById(id)
+    if err != nil {
+        c.Ctx.Output.SetStatus(http.StatusInternalServerError)
+        _ = c.Ctx.Output.JSON(ErrorResponse{err.Error()}, false, false)
+        return
+    }
 
-	user, err := models.Login(credentials.Email, credentials.Password)
-	if err != nil {
-		cont.Data["json"] = ErrorResponse{Message: err.Error()}
-		cont.ServeJSON()
-		return
-	}
+    token, err := services.MakeToken(user.Id, user.Role)
+    if err != nil {
+        c.Ctx.Output.SetStatus(http.StatusInternalServerError)
+        _ = c.Ctx.Output.JSON(ErrorResponse{err.Error()}, false, false)
+        return
+    }
 
-	token, err := services.MakeToken(user.Id)
-	if err != nil {
-		cont.Data["json"] = ErrorResponse{Message: err.Error()}
-		cont.ServeJSON()
-		return
-	}
-
-	cont.Data["json"] = AuthorizedResponse{
-		Message: "User logged in successfully",
-		User:    user,
-		Token:   token,
-	}
-	cont.ServeJSON()
+    resp := AuthorizedResponse{
+        Message: "user created successfully",
+        User:    user,
+        Token:   token,
+    }
+    _ = c.Ctx.Output.JSON(resp, false, false)
 }
 
-// @Title Index Users
-// @Description Index all users when request is authorized
-// @Param   Authorization   header   string   true   "Bearer token"
-// @router /users [get]
-func (cont *UserController) IndexAll() {
+// LoginUser handles POST /login
+func (c *UserController) LoginUser() {
+    body := c.Ctx.Input.CopyBody(1 << 20)
 
-	fmt.Println("===== DEBUG USERS =====")
+    var creds models.BasicCredentials
+    if err := json.Unmarshal(body, &creds); err != nil {
+        c.Ctx.Output.SetStatus(http.StatusBadRequest)
+        _ = c.Ctx.Output.JSON(ErrorResponse{"invalid JSON payload"}, false, false)
+        return
+    }
 
-	// 1. Lire le header Authorization
-	authHeader := cont.Ctx.Request.Header.Get("Authorization")
-	fmt.Println("Authorization Header:", authHeader)
+    if strings.TrimSpace(creds.Email) == "" || strings.TrimSpace(creds.Password) == "" {
+        c.Ctx.Output.SetStatus(http.StatusBadRequest)
+        _ = c.Ctx.Output.JSON(ErrorResponse{"email and password are required"}, false, false)
+        return
+    }
 
-	if authHeader == "" {
-		cont.Data["json"] = ErrorResponse{Message: "Missing Authorization header"}
-		cont.ServeJSON()
-		return
-	}
+    user, err := models.Login(creds.Email, creds.Password)
+    if err != nil {
+        c.Ctx.Output.SetStatus(http.StatusUnauthorized)
+        _ = c.Ctx.Output.JSON(ErrorResponse{err.Error()}, false, false)
+        return
+    }
 
-	// Format attendu : "Bearer <token>"
-	parts := strings.Split(authHeader, " ")
-	if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-		cont.Data["json"] = ErrorResponse{Message: "Invalid Authorization header format"}
-		cont.ServeJSON()
-		return
-	}
+    token, err := services.MakeToken(user.Id, user.Role)
+    if err != nil {
+        c.Ctx.Output.SetStatus(http.StatusInternalServerError)
+        _ = c.Ctx.Output.JSON(ErrorResponse{err.Error()}, false, false)
+        return
+    }
 
-	tokenString := parts[1]
+    resp := AuthorizedResponse{
+        Message: "user logged in successfully",
+        User:    user,
+        Token:   token,
+    }
+    _ = c.Ctx.Output.JSON(resp, false, false)
+}
 
-	// 2. Extraire userId depuis le token RSA
-	userId, err := services.GetUserIdFromToken(tokenString)
-	if err != nil {
-		fmt.Println("TOKEN ERROR:", err)
-		cont.Data["json"] = ErrorResponse{Message: "Invalid or expired token"}
-		cont.ServeJSON()
-		return
-	}
+// IndexAll handles GET /users and /v1/users (admin only)
+func (c *UserController) IndexAll() {
+    authHeader := c.Ctx.Request.Header.Get("Authorization")
+    if authHeader == "" {
+        c.Ctx.Output.SetStatus(http.StatusUnauthorized)
+        _ = c.Ctx.Output.JSON(ErrorResponse{"missing Authorization header"}, false, false)
+        return
+    }
 
-	fmt.Println("Token OK — userId =", userId)
+    parts := strings.SplitN(authHeader, " ", 2)
+    if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+        c.Ctx.Output.SetStatus(http.StatusUnauthorized)
+        _ = c.Ctx.Output.JSON(ErrorResponse{"invalid Authorization header format"}, false, false)
+        return
+    }
 
-	// 3. Récupérer les users dans MySQL
-	users, err := models.IndexAll()
-	if err != nil {
-		cont.Data["json"] = ErrorResponse{Message: err.Error()}
-		cont.ServeJSON()
-		return
-	}
+    tokenString := strings.TrimSpace(parts[1])
 
-	// 4. Retourner la liste des utilisateurs
-	cont.Data["json"] = users
-	cont.ServeJSON()
+    userID, err := services.GetUserIdFromToken(tokenString)
+    if err != nil {
+        c.Ctx.Output.SetStatus(http.StatusUnauthorized)
+        _ = c.Ctx.Output.JSON(ErrorResponse{"invalid or expired token"}, false, false)
+        return
+    }
+
+    role, err := services.GetRoleFromToken(tokenString)
+    if err != nil {
+        c.Ctx.Output.SetStatus(http.StatusForbidden)
+        _ = c.Ctx.Output.JSON(ErrorResponse{"cannot read role from token"}, false, false)
+        return
+    }
+
+    fmt.Println("Token OK — userId =", userID, "role =", role)
+
+    if role != "admin" {
+        c.Ctx.Output.SetStatus(http.StatusForbidden)
+        _ = c.Ctx.Output.JSON(ErrorResponse{"admin access required"}, false, false)
+        return
+    }
+
+    users, err := models.IndexAll()
+    if err != nil {
+        c.Ctx.Output.SetStatus(http.StatusInternalServerError)
+        _ = c.Ctx.Output.JSON(ErrorResponse{err.Error()}, false, false)
+        return
+    }
+
+    _ = c.Ctx.Output.JSON(users, false, false)
 }

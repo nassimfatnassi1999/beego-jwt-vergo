@@ -1,153 +1,140 @@
 package models
 
 import (
-	"errors"
-	"github.com/astaxie/beego/orm"
-	"golang.org/x/crypto/bcrypt"
-	"time"
+    "errors"
+    "strings"
+    "time"
+
+    "github.com/astaxie/beego/orm"
+    "golang.org/x/crypto/bcrypt"
 )
 
-// Id will automatically considered as Auto Increment Key
-// Unique string (Email field) cannot have the default size (that's too long)
-// Created field will be updated at every save
-// Updated field will be updated at the first save
-
-// User model struct (database & response)
+// User represents a user in database and in JSON
 type User struct {
-	Id			int64		`json:"id"`
-	Email		string		`json:"email" orm:"unique;index;size(191)"`
-	Password	string		`json:"-"`
-	Name		string		`json:"name"`
-	Created		time.Time	`json:"created_on" orm:"auto_now_add;type(datetime)"`
-	Updated		time.Time	`json:"updated_on" orm:"auto_now;type(datetime)"`
+    Id        int64     `json:"id" orm:"pk;auto"`
+    Email     string    `json:"email" orm:"unique;index;size(191)"`
+    Password  string    `json:"-" orm:"size(255)"`
+    Name      string    `json:"name" orm:"size(100)"`
+    Role      string    `json:"role" orm:"size(20);default(user)"`
+    CreatedAt time.Time `json:"created_on" orm:"auto_now_add;type(datetime)"`
+    UpdatedAt time.Time `json:"updated_on" orm:"auto_now;type(datetime)"`
 }
 
-// User model struct (input object)
+// InputUser is used when registering
 type InputUser struct {
-	Email		string	`json:"email"`
-	Password	string	`json:"password"`
-	Name		string	`json:"name"`
+    Email    string `json:"email"`
+    Password string `json:"password"`
+    Name     string `json:"name"`
+    Role     string `json:"role"`
 }
 
-// Define basic credentials struct
+// BasicCredentials is used for login
 type BasicCredentials struct {
-	Email		string	`json:"email"`
-	Password	string	`json:"password"`
+    Email    string `json:"email"`
+    Password string `json:"password"`
 }
 
 func init() {
-	// Register this model for database
-	orm.RegisterModel(new(User))
+    orm.RegisterModel(new(User))
 }
 
-// Custom table name
 func (u *User) TableName() string {
-	return "users"
+    return "users"
 }
 
-func IndexAll() (users []User, err error) {
-	// New ORM object
-	o := orm.NewOrm()
-
-	// Define empty users
-	var us []User
-
-	// Query table (Just get NAME and EMAIL) - Limit to 50 rows
-	count, e := o.QueryTable(new(User)).Limit(50).All(&us, "Name", "Email")
-	if e != nil {
-		return nil, e
-	}
-
-	if count <= 0 {
-		return nil, errors.New("nothing found")
-	}
-
-	return us, nil
+// IndexAll returns all users
+func IndexAll() ([]*User, error) {
+    o := orm.NewOrm()
+    var users []*User
+    _, err := o.QueryTable(new(User)).All(&users)
+    return users, err
 }
 
-// Create a new user
-func CreateNew(email, password, name string) (id int64, err error) {
-	// New ORM object
-	o := orm.NewOrm()
-
-	// Calculate password hash to save in database
-	passHash, hashErr := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if hashErr != nil {
-		return -1, errors.New("cannot generate hash from password")
-	}
-
-	// Init User and set data
-	user := User{}
-	user.Email = email
-	user.Password = string(passHash)
-	user.Name = name
-
-	// Insert object to database
-	uId, insertErr := o.Insert(&user)
-	if insertErr != nil {
-		return -1, errors.New("failed to insert user to database")
-	}
-
-	// Return result
-	return uId, nil
+// FindById returns a user by id
+func FindById(id int64) (*User, error) {
+    o := orm.NewOrm()
+    user := &User{Id: id}
+    if err := o.Read(user); err != nil {
+        if err == orm.ErrNoRows {
+            return nil, errors.New("user not found")
+        }
+        return nil, err
+    }
+    return user, nil
 }
 
-// Find an user by ID
-func FindById(id int64) (user *User, err error)  {
-	// New ORM object
-	o := orm.NewOrm()
-
-	// Init user with Id
-	u := User{Id: id}
-
-	// Read from database
-	e := o.Read(&u)
-
-	// Check for errors
-	if e == orm.ErrNoRows {
-		return nil, errors.New("user not found")
-	} else if e == nil {
-		return &u, nil
-	} else {
-		return nil, errors.New("unknown error occurred")
-	}
+// FindByEmail returns a user by e-mail
+func FindByEmail(email string) (*User, error) {
+    o := orm.NewOrm()
+    user := &User{}
+    err := o.QueryTable(new(User)).Filter("Email", email).One(user)
+    if err != nil {
+        if err == orm.ErrNoRows {
+            return nil, errors.New("user not found")
+        }
+        return nil, err
+    }
+    return user, nil
 }
 
-// Find an user by email
-func FindByEmail(email string) (user *User, err error)  {
-	// New ORM object
-	o := orm.NewOrm()
+// CreateNew creates a new user with hashed password
+func CreateNew(email, password, name, role string) (int64, error) {
+    email = strings.TrimSpace(email)
+    password = strings.TrimSpace(password)
+    name = strings.TrimSpace(name)
+    role = strings.TrimSpace(role)
 
-	// Init user with Email
-	u := User{Email: email}
+    if email == "" || password == "" || name == "" {
+        return 0, errors.New("email, password and name are required")
+    }
 
-	// Read from database
-	e := o.Read(&u, "Email")
+    if role == "" {
+        role = "user"
+    }
 
-	// Check for errors
-	if e == orm.ErrNoRows {
-		return nil, errors.New("user not found")
-	} else if e == nil {
-		return &u, nil
-	} else {
-		return nil, errors.New("unknown error occurred")
-	}
+    // Check if email already exists
+    if _, err := FindByEmail(email); err == nil {
+        return 0, errors.New("email already exists")
+    }
+
+    // Hash password
+    passHash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+    if err != nil {
+        return 0, err
+    }
+
+    u := &User{
+        Email:    email,
+        Password: string(passHash),
+        Name:     name,
+        Role:     role,
+    }
+
+    o := orm.NewOrm()
+    id, err := o.Insert(u)
+    if err != nil {
+        return 0, err
+    }
+    return id, nil
 }
 
-// Login method for user
-func Login(email, password string) (user *User, err error) {
-	// Get user
-	u, e := FindByEmail(email)
+// Login validates user credentials and returns the user
+func Login(email, password string) (*User, error) {
+    email = strings.TrimSpace(email)
+    password = strings.TrimSpace(password)
 
-	// Check for errors
-	if e == nil {
-		// No error -> Check credentials
-		if pErr := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(password)); pErr != nil {
-			return nil, errors.New("email and password doesn't match")
-		}
-		return u, nil
-	} else {
-		// Return error
-		return nil, e
-	}
+    if email == "" || password == "" {
+        return nil, errors.New("email and password are required")
+    }
+
+    u, err := FindByEmail(email)
+    if err != nil {
+        return nil, errors.New("invalid email or password")
+    }
+
+    if err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(password)); err != nil {
+        return nil, errors.New("invalid email or password")
+    }
+
+    return u, nil
 }

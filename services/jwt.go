@@ -1,133 +1,82 @@
 package services
 
 import (
-	"crypto/rsa"
-	"errors"
-	"os"
-	"strconv"
-	"strings"
-	"time"
+    "errors"
+    "time"
 
-	"github.com/SermoDigital/jose/crypto"
-	jwt "github.com/golang-jwt/jwt/v5"
+    "github.com/astaxie/beego"
+    jwt "github.com/golang-jwt/jwt/v5"
 )
 
-var (
-	iss = "api"
-	sub = "uid-"
-	aud = "client"
-	exp = 24 * 30 * time.Hour
-	nbf = 30 * time.Second
-)
+var jwtSecret []byte
+
+func init() {
+    secret := beego.AppConfig.String("jwt_secret")
+    if secret == "" {
+        // Fallback dev secret; DO NOT use in production
+        secret = "dev-secret-change-me"
+    }
+    jwtSecret = []byte(secret)
+}
 
 type Claims struct {
-	jwt.RegisteredClaims
+    UserID int64  `json:"uid"`
+    Role   string `json:"role"`
+    jwt.RegisteredClaims
 }
 
-func GetKeyPair() (*rsa.PrivateKey, *rsa.PublicKey, error) {
+// MakeToken creates a signed JWT for a user
+func MakeToken(userID int64, role string) (string, error) {
+    if role == "" {
+        role = "user"
+    }
 
-	privBytes, err := os.ReadFile("./keys/private.txt")
-	if err != nil {
-		return nil, nil, err
-	}
+    claims := &Claims{
+        UserID: userID,
+        Role:   role,
+        RegisteredClaims: jwt.RegisteredClaims{
+            ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+            IssuedAt:  jwt.NewNumericDate(time.Now()),
+        },
+    }
 
-	privKey, err := crypto.ParseRSAPrivateKeyFromPEM(privBytes)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	pubBytes, err := os.ReadFile("./keys/public.txt")
-	if err != nil {
-		return nil, nil, err
-	}
-
-	pubKey, err := crypto.ParseRSAPublicKeyFromPEM(pubBytes)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return privKey, pubKey, nil
+    token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+    return token.SignedString(jwtSecret)
 }
 
-func MakeToken(uid int64) (string, error) {
-	privKey, _, err := GetKeyPair()
-	if err != nil {
-		return "", err
-	}
+func parseToken(tokenString string) (*Claims, error) {
+    token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(t *jwt.Token) (interface{}, error) {
+        if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+            return nil, errors.New("unexpected signing method")
+        }
+        return jwtSecret, nil
+    })
+    if err != nil {
+        return nil, err
+    }
 
-	now := time.Now()
-	uidStr := strconv.FormatInt(uid, 10)
+    claims, ok := token.Claims.(*Claims)
+    if !ok || !token.Valid {
+        return nil, errors.New("invalid token")
+    }
 
-	claims := &Claims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    iss,
-			Subject:   sub + uidStr,
-			Audience:  jwt.ClaimStrings{aud},
-			ExpiresAt: jwt.NewNumericDate(now.Add(exp)),
-			NotBefore: jwt.NewNumericDate(now.Add(nbf)),
-			IssuedAt:  jwt.NewNumericDate(now),
-		},
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodRS512, claims)
-	return token.SignedString(privKey)
+    return claims, nil
 }
 
-func ValidateToken(tokenString string, uid int64) (bool, error) {
-
-	_, pubKey, err := GetKeyPair()
-	if err != nil {
-		return false, err
-	}
-
-	claims := &Claims{}
-
-	// Vérifie signature + claims
-	_, err = jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
-		return pubKey, nil
-	})
-
-	if err != nil {
-		return false, err
-	}
-
-	uidStr := strconv.FormatInt(uid, 10)
-
-	if claims.Subject != sub+uidStr {
-		return false, nil
-	}
-
-	return true, nil
-}
-
-// GetUserIdFromToken extrait l'ID utilisateur (uid) depuis le token JWT.
+// GetUserIdFromToken extracts user id from a token
 func GetUserIdFromToken(tokenString string) (int64, error) {
-	// On a juste besoin de la clé publique pour vérifier le token
-	_, pubKey, err := GetKeyPair()
-	if err != nil {
-		return 0, err
-	}
+    claims, err := parseToken(tokenString)
+    if err != nil {
+        return 0, err
+    }
+    return claims.UserID, nil
+}
 
-	claims := &Claims{}
-
-	// Vérifie la signature + remplit les claims
-	_, err = jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
-		return pubKey, nil
-	})
-	if err != nil {
-		return 0, err
-	}
-
-	// Subject attendu : "uid-<id>"
-	if !strings.HasPrefix(claims.Subject, sub) {
-		return 0, errors.New("invalid subject in token")
-	}
-
-	idStr := strings.TrimPrefix(claims.Subject, sub)
-	uid, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		return 0, errors.New("invalid user id in token")
-	}
-
-	return uid, nil
+// GetRoleFromToken extracts role from a token
+func GetRoleFromToken(tokenString string) (string, error) {
+    claims, err := parseToken(tokenString)
+    if err != nil {
+        return "", err
+    }
+    return claims.Role, nil
 }
